@@ -1,0 +1,88 @@
+---
+title: "Assignment 11 Personal Recommender"
+author: "Khandker Qaiduzzaman"
+format: html
+editor: visual
+---
+
+# Objective
+
+The objective of this assignment is to build a simple personalized movie recommender system using movie rating survey data. The dataset contains movie ratings provided by different users for several 2025 movie titles.
+
+# Approach
+
+For this assignment, I will build an **item-to-item collaborative filtering** recommender system using user rating data collected through a survey-style dataset. The system will focus on identifying relationships between movies based on how similarly users have rated them.
+
+The core idea behind this approach is that if two movies receive similar ratings from many users, they are likely to be similar in terms of audience preference. This similarity can then be used to recommend movies a user has not yet watched.
+
+The main steps of the approach are:
+
+-   **Data Cleaning and Preparation:** The raw dataset will be cleaned by standardizing column names, renaming variables for clarity, and converting rating values into numeric format. Movie-related columns will be isolated for analysis.
+
+-   **User-Item Matrix Construction:** A matrix will be created where rows represent users and columns represent movies. Each cell contains the rating a user has given to a specific movie.
+
+-   **Similarity Computation:** Item-to-item similarity will be calculated using cosine similarity. This will measure how closely related two movies are based on user rating behavior.
+
+-   **Recommendation Logic:** For a given user, the system will compute a weighted score for each unseen movie based on similarity with movies the user has already rated.
+
+-   **Top-N** **Recommendation:** The final step will generate a ranked list of top recommended movies for each user based on predicted preference scores.
+
+### Anticipated Challenges
+
+One of the main challenges in this assignment is handling missing ratings, since not all users have watched or rated all movies. These missing values must be properly managed to avoid bias in similarity calculations.
+
+Another challenge is ensuring that similarity scores remain meaningful when the number of common raters between two movies is small, which can sometimes distort cosine similarity results.
+
+Additionally, converting raw survey data into a clean user-item matrix requires careful data transformation and type conversion to ensure accurate computations.
+
+The dataset can be viewed here: <https://raw.githubusercontent.com/NafeesKhandker/Recommender-Systems/refs/heads/main/Movie%20Rating%20(Responses).csv>
+
+### Implementation of Data Import
+
+The following code demonstrates how the movie rating dataset is imported and cleaned in R. First, required libraries are loaded. The dataset is then imported directly from GitHub and previewed.
+
+```{r}
+library(tidyverse)
+library(gt)
+
+url <- "https://raw.githubusercontent.com/NafeesKhandker/Recommender-Systems/refs/heads/main/Movie%20Rating%20(Responses).csv"
+
+df <- read_csv(
+  file = url,
+  show_col_types = FALSE,
+  progress = FALSE
+)
+
+head(df)
+```
+
+Next, the dataset is cleaned and prepared for analysis. Column names are standardized, key variables are renamed for clarity, and movie rating columns are converted into numeric format.
+
+```{r}
+# install.packages("janitor")
+library(tidyverse)
+library(janitor)
+
+df_clean <- df %>%
+  clean_names() %>%   # makes names snake_case
+  rename(
+    user = name,
+    age = please_enter_your_age,
+    gender = please_enter_your_gender
+  )
+
+df_clean <- df_clean %>%
+  rename_with(
+    ~ str_replace_all(., "rate_|_on_a_scale_of_1_to_5_enter_na_if_you_havent_watched_this_movie", ""),
+    starts_with("rate_")
+  )
+
+df_clean <- df_clean %>%
+  mutate(across(contains("2025"), as.numeric))
+
+df_clean |> gt()
+```
+
+# Reference
+
+-   OpenAI. (2026). *ChatGPT (Apr 23 version) assistance on recommender system Quarto document development*. <https://chat.openai.com/>
