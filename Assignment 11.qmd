@@ -1,8 +1,10 @@
 ---
-title: "Assignment 11 Personal Recommender"
+title: "Assignment 11 Personalized Recommender"
 author: "Khandker Qaiduzzaman"
 format: html
 editor: visual
+execute: 
+  warning: false
 ---
 
 # Objective
@@ -14,6 +16,8 @@ The objective of this assignment is to build a simple personalized movie recomme
 For this assignment, I will build an **item-to-item collaborative filtering** recommender system using user rating data collected through a survey-style dataset. The system will focus on identifying relationships between movies based on how similarly users have rated them.
 
 The core idea behind this approach is that if two movies receive similar ratings from many users, they are likely to be similar in terms of audience preference. This similarity can then be used to recommend movies a user has not yet watched.
+
+![](images/item-based filtering.png)
 
 The main steps of the approach are:
 
@@ -27,6 +31,10 @@ The main steps of the approach are:
 
 -   **Top-N** **Recommendation:** The final step will generate a ranked list of top recommended movies for each user based on predicted preference scores.
 
+### Recommender Output Definition
+
+The recommender outputs a ranked list of top-N movies for each user based on predicted ratings. For each user, the system predicts ratings for movies they have not seen, sorts them in descending order, and returns the highest-rated items as personalized recommendations. The final output includes the user name, movie title, and predicted rating, forming a ranked recommendation list.
+
 ### Anticipated Challenges
 
 One of the main challenges in this assignment is handling missing ratings, since not all users have watched or rated all movies. These missing values must be properly managed to avoid bias in similarity calculations.
@@ -37,9 +45,9 @@ Additionally, converting raw survey data into a clean user-item matrix requires 
 
 The dataset can be viewed here: <https://raw.githubusercontent.com/NafeesKhandker/Recommender-Systems/refs/heads/main/Movie%20Rating%20(Responses).csv>
 
-### Implementation of Data Import
+### Data Import and Initial Exploration
 
-The following code demonstrates how the movie rating dataset is imported and cleaned in R. First, required libraries are loaded. The dataset is then imported directly from GitHub and previewed.
+The movie rating dataset is imported from a GitHub repository using the tidyverse package. This dataset contains user ratings for several 2025 movie titles along with demographic information such as age and gender. After loading the dataset, a quick preview is performed to understand its structure and verify successful import.
 
 ```{r}
 library(tidyverse)
@@ -56,7 +64,9 @@ df <- read_csv(
 head(df)
 ```
 
-Next, the dataset is cleaned and prepared for analysis. Column names are standardized, key variables are renamed for clarity, and movie rating columns are converted into numeric format.
+### Data Cleaning and Preparation
+
+This section focuses on cleaning and standardizing the dataset for analysis. Column names are converted into a consistent format using clean_names(). Key variables such as user information and demographic attributes are renamed for clarity. Movie rating columns are also simplified by removing long text patterns from their names. Finally, all movie rating variables are converted into numeric format to ensure compatibility with recommender system modeling.
 
 ```{r}
 # install.packages("janitor")
@@ -83,6 +93,159 @@ df_clean <- df_clean %>%
 df_clean |> gt()
 ```
 
+### User-Item Matrix Construction and Train-Test Split
+
+In this section, the cleaned dataset is transformed into a user-item rating matrix, where rows represent users and columns represent movies. This matrix is then converted into a realRatingMatrix format required by the recommenderlab package. The data is split into training and testing sets using an 80/20 split to evaluate model performance. The split also separates known and unknown ratings for prediction evaluation.
+
+```{r}
+#install.packages("recommenderlab")
+library(recommenderlab)
+library(tidyverse)
+
+# -----------------------------
+# Create User-Item Matrix
+# -----------------------------
+ratings_matrix <- df_clean %>%
+  select(user, contains("2025")) %>%
+  column_to_rownames("user") %>%
+  as.matrix()
+
+ratings_rrm <- as(ratings_matrix, "realRatingMatrix")
+
+# -----------------------------
+# Train/Test Split
+# -----------------------------
+set.seed(123)
+
+scheme <- evaluationScheme(
+  data = ratings_rrm,
+  method = "split",
+  train = 0.8,
+  given = -1
+)
+
+train_data <- getData(scheme, "train")
+known_data <- getData(scheme, "known")
+unknown_data <- getData(scheme, "unknown")
+
+```
+
+### Hyperparameter Tuning (k Selection Using RMSE)
+
+This section evaluates different values of k (from 1 to 5) to identify the optimal number of nearest neighbors in the item-based collaborative filtering model. For each k value, an IBCF model is trained using cosine similarity, and predictions are generated for the test data. The Root Mean Squared Error (RMSE) is calculated by comparing predicted and actual ratings. The results are stored in a summary table for comparison.
+
+```{r}
+# -----------------------------
+# Function to compute RMSE for a given k
+# -----------------------------
+get_rmse <- function(k_value) {
+  
+  model <- Recommender(
+    data = train_data,
+    method = "IBCF",
+    parameter = list(method = "Cosine", k = k_value)
+  )
+  
+  pred <- predict(model, known_data, type = "ratings")
+  
+  pred_mat <- as(pred, "matrix")
+  true_mat <- as(unknown_data, "matrix")
+  
+  sqrt(mean((pred_mat - true_mat)^2, na.rm = TRUE))
+}
+
+# -----------------------------
+# Run for k = 1 to 5
+# -----------------------------
+k_values <- 1:5
+
+rmse_results <- tibble(
+  k = k_values,
+  RMSE = sapply(k_values, get_rmse)
+)
+
+rmse_results |> gt()
+```
+
+### Best k Selection
+
+The optimal value of k is selected based on the lowest RMSE obtained from the previous step. This ensures that the final recommender model achieves the best predictive accuracy on unseen data.
+
+```{r}
+best_k <- rmse_results %>%
+  arrange(RMSE) %>%
+  slice(1)
+
+best_k |> gt()
+```
+
+### Final Model Training
+
+Using the optimal k value identified through tuning, the final Item-Based Collaborative Filtering model is trained on the full dataset. This allows the model to leverage all available user ratings while maintaining optimal similarity constraints.
+
+```{r}
+best_k_value <- best_k$k
+
+final_model <- Recommender(
+  data = ratings_rrm,
+  method = "IBCF",
+  parameter = list(method = "Cosine", k = best_k_value)
+)
+
+pred_final <- predict(final_model, ratings_rrm, type = "ratings")
+
+pred_matrix <- as(pred_final, "matrix")
+```
+
+### Personalized Movie Recommendations
+
+This section generates personalized movie recommendations for each user. For every user, only movies they have not rated are considered. Predicted ratings are sorted in descending order to produce a ranked list of recommended movies. The final output is presented in a structured table format for easy interpretation.
+
+```{r}
+rec_list <- lapply(rownames(ratings_matrix), function(u) {
+  
+  user_ratings <- ratings_matrix[u, ]
+  user_pred <- pred_matrix[u, ]
+  
+  # only unseen movies
+  unseen <- is.na(user_ratings)
+  
+  sort(user_pred[unseen], decreasing = TRUE)
+})
+
+names(rec_list) <- rownames(ratings_matrix)
+
+rec_df <- bind_rows(
+  lapply(names(rec_list), function(u) {
+    tibble(
+      user = u,
+      movie = names(rec_list[[u]]),
+      predicted_rating = as.numeric(rec_list[[u]])
+    )
+  })
+) %>%
+  group_by(user) %>%
+  arrange(user, desc(predicted_rating)) %>%
+  ungroup()
+
+rec_df %>%
+  gt() %>%
+  tab_header(title = "Personalized Movie Recommendations (Best k Model)")
+```
+
+# Conclusion and Limitations
+
+This project implemented an item-based collaborative filtering recommender system using cosine similarity, with k = 3 selected as optimal based on the lowest RMSE.
+
+However, the results are constrained by the small and sparse nature of the dataset (6 movies and 7 users). Many users have rated only a few movies, which limits how many reliable recommendations can be generated.
+
+For example, Tabassumul Kayenath rated only one movie and left five movies unrated. In item-based collaborative filtering, recommendations are derived by comparing a user’s rated items with similar items. Since she has only one rated movie, the model has very limited information to propagate preferences, which results in only a small number of meaningful predicted ratings instead of a full recommendation list.
+
+Additionally, missing ratings (NA values) and the small number of items reduce the strength of similarity estimates. This is also why increasing k beyond 3 does not improve performance, as reflected in the stable RMSE values.
+
+Overall, while the model successfully generates personalized recommendations, its effectiveness is limited by data sparsity and the small scale of the dataset, which are common challenges in real-world recommender systems with limited user engagement.
+
 # Reference
 
--   OpenAI. (2026). *ChatGPT (Apr 23 version) assistance on recommender system Quarto document development*. <https://chat.openai.com/>
+-   OpenAI. (2026). *ChatGPT conversation: Recommender System Approach* \[Large language model\]. <https://chat.openai.com/>
+-   Ghriss, J. (n.d.). *038 item based collaborative filtering* \[Video\]. YouTube. <https://www.youtube.com/watch?v=RiTc6PxMchM>
